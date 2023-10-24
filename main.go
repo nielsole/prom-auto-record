@@ -104,6 +104,15 @@ func GenerateExprSignature(node parser.Node) string {
 		case *parser.VectorSelector:
 			sb.WriteString(GenerateSignature(expr))
 			sb.WriteString("_")
+		case *parser.NumberLiteral:
+			sb.WriteString(fmt.Sprintf("NUM_%f_", expr.Val))
+		default:
+			// Catch-all for other types of nodes
+			if expr != nil {
+				sb.WriteString(fmt.Sprintf("TYPE_%T_VAL_%v_", expr, expr))
+			} else {
+				sb.WriteString(fmt.Sprintf("TYPE_%T_", expr))
+			}
 		}
 		return nil
 	})
@@ -163,6 +172,7 @@ func main() {
 		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (le)`,
 		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (le)`,
 		`sum(http_request_duration_seconds_bucket{service="service-b"}) by (le)`,
+		`topk(5, sum(http_request_duration_seconds_bucket{service="service-b"}) by (le))`,
 	}
 
 	signatureMap := make(map[string][]parser.Expr)
