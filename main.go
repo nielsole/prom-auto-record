@@ -93,6 +93,23 @@ func GenerateSignature(sel *parser.VectorSelector) string {
 	return sb.String()
 }
 
+// GenerateExprSignature generates a signature for an entire expression in a query.
+func GenerateExprSignature(node parser.Node) string {
+	var sb strings.Builder
+	parser.Inspect(node, func(n parser.Node, path []parser.Node) error {
+		switch expr := n.(type) {
+		case *parser.AggregateExpr:
+			sb.WriteString(expr.Op.String())
+			sb.WriteString("_")
+		case *parser.VectorSelector:
+			sb.WriteString(GenerateSignature(expr))
+			sb.WriteString("_")
+		}
+		return nil
+	})
+	return sb.String()
+}
+
 // labelsEqual compares two slices of *labels.Matcher for equality
 // Returns:
 // - bool indicating if all label names are the same
@@ -148,20 +165,15 @@ func main() {
 		`sum(http_request_duration_seconds_bucket{service="service-b"}) by (le)`,
 	}
 
-	signatureMap := make(map[string][]*parser.VectorSelector)
+	signatureMap := make(map[string][]parser.Expr)
 
 	for _, query := range queries {
 		expr, err := parser.ParseExpr(query)
 		if err != nil {
 			log.Fatalf("Error while parsing the query: %v", err)
 		}
-		visitor := &QueryVisitor{}
-		parser.Walk(visitor, expr, nil)
-
-		for _, sel := range visitor.Selectors {
-			sig := GenerateSignature(sel.Selector)
-			signatureMap[sig] = append(signatureMap[sig], sel.Selector)
-		}
+		sig := GenerateExprSignature(expr)
+		signatureMap[sig] = append(signatureMap[sig], expr)
 	}
 
 	// Now, signatureMap contains all the selectors grouped by their signatures.
