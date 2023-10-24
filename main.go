@@ -173,6 +173,7 @@ func main() {
 		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (le)`,
 		`sum(http_request_duration_seconds_bucket{service="service-b"}) by (le)`,
 		`topk(5, sum(http_request_duration_seconds_bucket{service="service-b"}) by (le))`,
+		`topk(5, sum(http_request_duration_seconds_bucket{service="service-a"}) by (service, le))`,
 	}
 
 	signatureMap := make(map[string][]parser.Expr)
