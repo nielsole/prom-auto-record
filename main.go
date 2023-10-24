@@ -4,68 +4,133 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
-type queryDiffVisitor struct {
-	Selectors []string
+type QueryVisitor struct {
+	Selectors []*parser.VectorSelector
 }
 
-func (v *queryDiffVisitor) Visit(node parser.Node, path []parser.Node) (parser.Visitor, error) {
+func (v *QueryVisitor) Visit(node parser.Node, path []parser.Node) (parser.Visitor, error) {
 	switch n := node.(type) {
 	case *parser.VectorSelector:
-		v.Selectors = append(v.Selectors, n.String())
-		// You can extend this for MatrixSelector or other types if needed
+		v.Selectors = append(v.Selectors, n)
 	}
 	return v, nil
 }
 
-func getSelectorsFromQuery(query string) []string {
-	expr, err := parser.ParseExpr(query)
-	if err != nil {
-		log.Fatalf("Error while parsing the query: %v", err)
+func makeSelectorKey(sel *parser.VectorSelector) string {
+	// Assuming metric name is sufficient for now,
+	// but you can add more details like sorted labels etc.
+	return sel.Name
+}
+
+func diffSelectors(v1, v2 *QueryVisitor) []*parser.VectorSelector {
+	// Create maps for easy look-up
+	map1 := make(map[string]*parser.VectorSelector)
+	map2 := make(map[string]*parser.VectorSelector)
+
+	for _, sel := range v1.Selectors {
+		map1[makeSelectorKey(sel)] = sel
+	}
+	for _, sel := range v2.Selectors {
+		map2[makeSelectorKey(sel)] = sel
 	}
 
-	visitor := &queryDiffVisitor{}
-	parser.Walk(visitor, expr, nil)
+	// Find differing nodes
+	diffNodes := []*parser.VectorSelector{}
+	for k, v1 := range map1 {
+		if v2, ok := map2[k]; ok {
+			// Compare label matchers
+			allNamesSame, differingLabels, _ := labelsEqual(v1.LabelMatchers, v2.LabelMatchers)
+			if !allNamesSame || len(differingLabels) > 0 {
+				diffNodes = append(diffNodes, v1, v2)
+			}
+		} else {
+			diffNodes = append(diffNodes, v1)
+		}
+	}
 
-	return visitor.Selectors
+	// Add any remaining selectors from map2
+	for k := range map2 {
+		if _, ok := map1[k]; !ok {
+			diffNodes = append(diffNodes, map2[k])
+		}
+	}
+
+	return diffNodes
+}
+
+// labelsEqual compares two slices of *labels.Matcher for equality
+// Returns:
+// - bool indicating if all label names are the same
+// - slice of label names with differing values
+// - slice of label names with the same values
+func labelsEqual(l1, l2 []*labels.Matcher) (bool, []string, []string) {
+	labelMap1 := make(map[string]*labels.Matcher, len(l1))
+	labelMap2 := make(map[string]*labels.Matcher, len(l2))
+
+	// Initialize maps for quick lookup
+	for _, lm := range l1 {
+		labelMap1[lm.Name] = lm
+	}
+	for _, lm := range l2 {
+		labelMap2[lm.Name] = lm
+	}
+
+	allNamesSame := true
+	differingLabels := []string{}
+	sameLabels := []string{}
+
+	// Check labelMap1 against labelMap2
+	for k, v1 := range labelMap1 {
+		if v2, ok := labelMap2[k]; ok {
+			if v1.Type != v2.Type || v1.Value != v2.Value {
+				differingLabels = append(differingLabels, k)
+			} else {
+				sameLabels = append(sameLabels, k)
+			}
+		} else {
+			allNamesSame = false
+			differingLabels = append(differingLabels, k)
+		}
+	}
+
+	// Check for extra labels in labelMap2
+	for k := range labelMap2 {
+		if _, ok := labelMap1[k]; !ok {
+			allNamesSame = false
+			differingLabels = append(differingLabels, k)
+		}
+	}
+
+	return allNamesSame, differingLabels, sameLabels
 }
 
 func main() {
-	// // Your PromQL query string
-	// query := `http_requests_total{method="GET"}`
-
-	// // Parse the expression
-	// expr, err := parser.ParseExpr(query)
-	// if err != nil {
-	// 	log.Fatalf("Error while parsing the PromQL query: %v", err)
-	// }
-
-	// // Do something with the parsed expression
-	// handleExpression(expr)
 	query1 := `sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (service, le)`
 	query2 := `sum(http_request_duration_seconds_bucket{service="service-b",le="+Inf"}) by (service, le)`
 
-	selectors1 := getSelectorsFromQuery(query1)
-	selectors2 := getSelectorsFromQuery(query2)
-
-	// Now compare selectors1 and selectors2 to find differences and generate the generalized query
-	fmt.Println("Selectors from Query 1:", selectors1)
-	fmt.Println("Selectors from Query 2:", selectors2)
-}
-
-func handleExpression(expr parser.Expr) {
-	// Switch based on the type of the expression
-	switch e := expr.(type) {
-	case *parser.VectorSelector:
-		// Handle Vector Selector
-		fmt.Printf("Vector Selector: %s\n", e.Name)
-	case *parser.MatrixSelector:
-		// Handle Matrix Selector
-		fmt.Printf("Matrix Selector: %s[%s]\n", e.VectorSelector.Pretty(0), e.Range)
-	// Add more cases as needed
-	default:
-		fmt.Printf("Unhandled expression type: %T\n", e)
+	// Parse and walk query1
+	expr1, err := parser.ParseExpr(query1)
+	if err != nil {
+		log.Fatalf("Error while parsing the query: %v", err)
 	}
+	visitor1 := &QueryVisitor{}
+	parser.Walk(visitor1, expr1, nil)
+
+	// Parse and walk query2
+	expr2, err := parser.ParseExpr(query2)
+	if err != nil {
+		log.Fatalf("Error while parsing the query: %v", err)
+	}
+	visitor2 := &QueryVisitor{}
+	parser.Walk(visitor2, expr2, nil)
+
+	// Find the differing nodes
+	differingNodes := diffSelectors(visitor1, visitor2)
+
+	// You can now use these node references to modify the AST and create a new query
+	fmt.Printf("Differing Nodes: %v\n", differingNodes)
 }
