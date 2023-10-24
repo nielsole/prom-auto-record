@@ -8,28 +8,37 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
+type SelectorWithPath struct {
+	Selector *parser.VectorSelector
+	Path     []parser.Node
+}
+
 type QueryVisitor struct {
-	Selectors []*parser.VectorSelector
+	Selectors []*SelectorWithPath
 }
 
 func (v *QueryVisitor) Visit(node parser.Node, path []parser.Node) (parser.Visitor, error) {
 	switch n := node.(type) {
 	case *parser.VectorSelector:
-		v.Selectors = append(v.Selectors, n)
+		selectorWithPath := &SelectorWithPath{
+			Selector: n,
+			Path:     append([]parser.Node{}, path...), // Copying path to avoid modification
+		}
+		v.Selectors = append(v.Selectors, selectorWithPath)
 	}
 	return v, nil
 }
 
-func makeSelectorKey(sel *parser.VectorSelector) string {
+func makeSelectorKey(sel *SelectorWithPath) string {
 	// Assuming metric name is sufficient for now,
 	// but you can add more details like sorted labels etc.
-	return sel.Name
+	return sel.Selector.Name
 }
 
-func diffSelectors(v1, v2 *QueryVisitor) []*parser.VectorSelector {
+func diffSelectors(v1, v2 *QueryVisitor) []*SelectorWithPath {
 	// Create maps for easy look-up
-	map1 := make(map[string]*parser.VectorSelector)
-	map2 := make(map[string]*parser.VectorSelector)
+	map1 := make(map[string]*SelectorWithPath)
+	map2 := make(map[string]*SelectorWithPath)
 
 	for _, sel := range v1.Selectors {
 		map1[makeSelectorKey(sel)] = sel
@@ -39,11 +48,11 @@ func diffSelectors(v1, v2 *QueryVisitor) []*parser.VectorSelector {
 	}
 
 	// Find differing nodes
-	diffNodes := []*parser.VectorSelector{}
+	diffNodes := []*SelectorWithPath{}
 	for k, v1 := range map1 {
 		if v2, ok := map2[k]; ok {
 			// Compare label matchers
-			allNamesSame, differingLabels, _ := labelsEqual(v1.LabelMatchers, v2.LabelMatchers)
+			allNamesSame, differingLabels, _ := labelsEqual(v1.Selector.LabelMatchers, v2.Selector.LabelMatchers)
 			if !allNamesSame || len(differingLabels) > 0 {
 				diffNodes = append(diffNodes, v1, v2)
 			}
@@ -132,5 +141,7 @@ func main() {
 	differingNodes := diffSelectors(visitor1, visitor2)
 
 	// You can now use these node references to modify the AST and create a new query
-	fmt.Printf("Differing Nodes: %v\n", differingNodes)
+	for _, node := range differingNodes {
+		fmt.Printf("Differing Node: %s\n", node.Selector)
+	}
 }
