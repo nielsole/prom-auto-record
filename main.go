@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -71,6 +72,27 @@ func diffSelectors(v1, v2 *QueryVisitor) []*SelectorWithPath {
 	return diffNodes
 }
 
+// GenerateSignature generates a signature for a VectorSelector in a query.
+func GenerateSignature(sel *parser.VectorSelector) string {
+	var sb strings.Builder
+	sb.WriteString(sel.Name) // assuming metric name will be part of signature
+	sb.WriteString("{")
+	for i, matcher := range sel.LabelMatchers {
+		sb.WriteString(matcher.Name)
+		sb.WriteString("=")
+		if matcher.Type == labels.MatchEqual {
+			sb.WriteString("<val>")
+		} else {
+			sb.WriteString("<complex_val>")
+		}
+		if i < len(sel.LabelMatchers)-1 {
+			sb.WriteString(",")
+		}
+	}
+	sb.WriteString("}")
+	return sb.String()
+}
+
 // labelsEqual compares two slices of *labels.Matcher for equality
 // Returns:
 // - bool indicating if all label names are the same
@@ -118,30 +140,36 @@ func labelsEqual(l1, l2 []*labels.Matcher) (bool, []string, []string) {
 }
 
 func main() {
-	query1 := `sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (service, le)`
-	query2 := `sum(http_request_duration_seconds_bucket{service="service-b",le="+Inf"}) by (service, le)`
-
-	// Parse and walk query1
-	expr1, err := parser.ParseExpr(query1)
-	if err != nil {
-		log.Fatalf("Error while parsing the query: %v", err)
+	queries := []string{
+		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (service, le)`,
+		`sum(http_request_duration_seconds_bucket{service="service-b",le="+Inf"}) by (service, le)`,
+		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (le)`,
+		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (le)`,
+		`sum(http_request_duration_seconds_bucket{service="service-b"}) by (le)`,
 	}
-	visitor1 := &QueryVisitor{}
-	parser.Walk(visitor1, expr1, nil)
 
-	// Parse and walk query2
-	expr2, err := parser.ParseExpr(query2)
-	if err != nil {
-		log.Fatalf("Error while parsing the query: %v", err)
+	signatureMap := make(map[string][]*parser.VectorSelector)
+
+	for _, query := range queries {
+		expr, err := parser.ParseExpr(query)
+		if err != nil {
+			log.Fatalf("Error while parsing the query: %v", err)
+		}
+		visitor := &QueryVisitor{}
+		parser.Walk(visitor, expr, nil)
+
+		for _, sel := range visitor.Selectors {
+			sig := GenerateSignature(sel.Selector)
+			signatureMap[sig] = append(signatureMap[sig], sel.Selector)
+		}
 	}
-	visitor2 := &QueryVisitor{}
-	parser.Walk(visitor2, expr2, nil)
 
-	// Find the differing nodes
-	differingNodes := diffSelectors(visitor1, visitor2)
-
-	// You can now use these node references to modify the AST and create a new query
-	for _, node := range differingNodes {
-		fmt.Printf("Differing Node: %s\n", node.Selector)
+	// Now, signatureMap contains all the selectors grouped by their signatures.
+	// You can now proceed with additional checks or optimizations on each group.
+	for signature, selectors := range signatureMap {
+		fmt.Printf("Signature: %s\n", signature)
+		for _, sel := range selectors {
+			fmt.Printf("  - %s\n", sel)
+		}
 	}
 }
