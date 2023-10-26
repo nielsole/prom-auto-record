@@ -165,6 +165,48 @@ func labelsEqual(l1, l2 []*labels.Matcher) (bool, []string, []string) {
 	return allNamesSame, differingLabels, sameLabels
 }
 
+func generateSignatures(queries []string) map[string][]*parser.VectorSelector {
+	signatureToQueries := make(map[string][]*parser.VectorSelector)
+
+	for _, queries := range signatureToQueries {
+		staticLabels := make(map[string]string)
+		changingLabels := make(map[string]bool)
+
+		// Initialize with the labels from the first query
+		for _, matcher := range queries[0].LabelMatchers {
+			staticLabels[matcher.Name] = matcher.Value
+		}
+
+		// Check the remaining queries
+		for _, query := range queries[1:] {
+			for name := range staticLabels {
+				found := false
+				for _, matcher := range query.LabelMatchers {
+					if name == matcher.Name {
+						found = true
+						if staticLabels[name] != matcher.Value {
+							// Move to changingLabels and break
+							changingLabels[name] = true
+							delete(staticLabels, name)
+						}
+						break
+					}
+				}
+				if !found {
+					// If the label is not found in one of the queries, it's changing.
+					changingLabels[name] = true
+					delete(staticLabels, name)
+				}
+			}
+		}
+
+		// At this point, `staticLabels` contains labels that are the same across all queries,
+		// and `changingLabels` contains labels that are different.
+
+		// Now you can generate your recording rule
+	}
+}
+
 func main() {
 	queries := []string{
 		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (service, le)`,
