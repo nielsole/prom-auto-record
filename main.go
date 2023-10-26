@@ -165,76 +165,137 @@ func labelsEqual(l1, l2 []*labels.Matcher) (bool, []string, []string) {
 	return allNamesSame, differingLabels, sameLabels
 }
 
-func generateSignatures(queries []string) map[string][]*parser.VectorSelector {
-	signatureToQueries := make(map[string][]*parser.VectorSelector)
+// func generateSignatures(queries []string) map[string][]*parser.VectorSelector {
+// 	signatureToQueries := make(map[string][]*parser.VectorSelector)
 
-	for _, queries := range signatureToQueries {
-		staticLabels := make(map[string]string)
-		changingLabels := make(map[string]bool)
+// 	for _, queries := range signatureToQueries {
+// 		staticLabels := make(map[string]string)
+// 		changingLabels := make(map[string]bool)
 
-		// Initialize with the labels from the first query
-		for _, matcher := range queries[0].LabelMatchers {
-			staticLabels[matcher.Name] = matcher.Value
-		}
+// 		// Initialize with the labels from the first query
+// 		for _, matcher := range queries[0].LabelMatchers {
+// 			staticLabels[matcher.Name] = matcher.Value
+// 		}
 
-		// Check the remaining queries
-		for _, query := range queries[1:] {
-			for name := range staticLabels {
-				found := false
-				for _, matcher := range query.LabelMatchers {
-					if name == matcher.Name {
-						found = true
-						if staticLabels[name] != matcher.Value {
-							// Move to changingLabels and break
-							changingLabels[name] = true
-							delete(staticLabels, name)
-						}
-						break
-					}
-				}
-				if !found {
-					// If the label is not found in one of the queries, it's changing.
-					changingLabels[name] = true
-					delete(staticLabels, name)
-				}
-			}
-		}
+// 		// Check the remaining queries
+// 		for _, query := range queries[1:] {
+// 			for name := range staticLabels {
+// 				found := false
+// 				for _, matcher := range query.LabelMatchers {
+// 					if name == matcher.Name {
+// 						found = true
+// 						if staticLabels[name] != matcher.Value {
+// 							// Move to changingLabels and break
+// 							changingLabels[name] = true
+// 							delete(staticLabels, name)
+// 						}
+// 						break
+// 					}
+// 				}
+// 				if !found {
+// 					// If the label is not found in one of the queries, it's changing.
+// 					changingLabels[name] = true
+// 					delete(staticLabels, name)
+// 				}
+// 			}
+// 		}
 
-		// At this point, `staticLabels` contains labels that are the same across all queries,
-		// and `changingLabels` contains labels that are different.
+// 		// At this point, `staticLabels` contains labels that are the same across all queries,
+// 		// and `changingLabels` contains labels that are different.
 
-		// Now you can generate your recording rule
+// 		// Now you can generate your recording rule
+// 	}
+// }
+
+type SafeSubtreeFinder struct {
+	SafeRoots []parser.Node // store the root nodes of safe subtrees
+}
+
+// Visit navigates through the AST and appends safe roots to SafeRoots
+func (v *SafeSubtreeFinder) Visit(node parser.Node, path []parser.Node) (parser.Visitor, error) {
+	if isSafeNode(node) {
+		v.SafeRoots = append(v.SafeRoots, node)
+		// Returning nil to stop further traversal of this subtree.
+		return nil, nil
+	}
+	return v, nil
+}
+
+// isSafeNode checks if a given node and its subtree are safe for recording rules.
+func isSafeNode(node parser.Node) bool {
+	switch n := node.(type) {
+	case *parser.VectorSelector:
+		return true
+	case *parser.AggregateExpr:
+		return isSafeAggregateExpr(n)
+	default:
+		return false
+	}
+}
+
+// isSafeAggregateExpr checks if an aggregate expression is safe.
+func isSafeAggregateExpr(expr *parser.AggregateExpr) bool {
+	switch expr.Op {
+	case parser.AVG, parser.SUM, parser.COUNT:
+		return isSafeNode(expr.Expr)
+	default:
+		return false
 	}
 }
 
 func main() {
-	queries := []string{
-		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (service, le)`,
-		`sum(http_request_duration_seconds_bucket{service="service-b",le="+Inf"}) by (service, le)`,
-		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (le)`,
-		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (le)`,
-		`sum(http_request_duration_seconds_bucket{service="service-b"}) by (le)`,
-		`topk(5, sum(http_request_duration_seconds_bucket{service="service-b"}) by (le))`,
-		`topk(5, sum(http_request_duration_seconds_bucket{service="service-a"}) by (service, le))`,
+	// Your query
+	query := `topk(5, sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (service, le))`
+
+	// Parse the query
+	expr, err := parser.ParseExpr(query)
+	if err != nil {
+		log.Fatalf("Error while parsing the query: %v", err)
 	}
 
-	signatureMap := make(map[string][]parser.Expr)
+	// Initialize the SafeSubtreeFinder
+	visitor := &SafeSubtreeFinder{}
 
-	for _, query := range queries {
-		expr, err := parser.ParseExpr(query)
-		if err != nil {
-			log.Fatalf("Error while parsing the query: %v", err)
-		}
-		sig := GenerateExprSignature(expr)
-		signatureMap[sig] = append(signatureMap[sig], expr)
-	}
+	// Walk the AST
+	parser.Walk(visitor, expr, nil)
 
-	// Now, signatureMap contains all the selectors grouped by their signatures.
-	// You can now proceed with additional checks or optimizations on each group.
-	for signature, selectors := range signatureMap {
-		fmt.Printf("Signature: %s\n", signature)
-		for _, sel := range selectors {
-			fmt.Printf("  - %s\n", sel)
-		}
+	// Now, visitor.SafeRoots should contain the root nodes of safe subtrees
+	// You can use these for constructing your recording rules.
+
+	// Print all the safe roots found
+	for _, root := range visitor.SafeRoots {
+		fmt.Printf("Safe root: %v\n", root)
 	}
 }
+
+// func main() {
+// 	queries := []string{
+// 		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (service, le)`,
+// 		`sum(http_request_duration_seconds_bucket{service="service-b",le="+Inf"}) by (service, le)`,
+// 		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (le)`,
+// 		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (le)`,
+// 		`sum(http_request_duration_seconds_bucket{service="service-b"}) by (le)`,
+// 		`topk(5, sum(http_request_duration_seconds_bucket{service="service-b"}) by (le))`,
+// 		`topk(5, sum(http_request_duration_seconds_bucket{service="service-a"}) by (service, le))`,
+// 	}
+
+// 	signatureMap := make(map[string][]parser.Expr)
+
+// 	for _, query := range queries {
+// 		expr, err := parser.ParseExpr(query)
+// 		if err != nil {
+// 			log.Fatalf("Error while parsing the query: %v", err)
+// 		}
+// 		sig := GenerateExprSignature(expr)
+// 		signatureMap[sig] = append(signatureMap[sig], expr)
+// 	}
+
+// 	// Now, signatureMap contains all the selectors grouped by their signatures.
+// 	// You can now proceed with additional checks or optimizations on each group.
+// 	for signature, selectors := range signatureMap {
+// 		fmt.Printf("Signature: %s\n", signature)
+// 		for _, sel := range selectors {
+// 			fmt.Printf("  - %s\n", sel)
+// 		}
+// 	}
+// }
