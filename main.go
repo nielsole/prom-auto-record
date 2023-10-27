@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -72,6 +74,26 @@ func diffSelectors(v1, v2 *QueryVisitor) []*SelectorWithPath {
 	}
 
 	return diffNodes
+}
+
+// GenerateHashedMetricName generates a collision-free, Prometheus-compliant metric name
+func GenerateHashedMetricName(baseSignature string, prefix string) string {
+	// Create a new hash
+	hash := sha256.New()
+
+	// Write your string to the hash
+	hash.Write([]byte(baseSignature))
+
+	// Generate the hash value
+	hashValue := hash.Sum(nil)
+
+	// Convert the hash value to a human-readable hexadecimal string
+	hashString := hex.EncodeToString(hashValue)[:12] // Take first 12 characters of the hash
+
+	// Create the final metric name by appending the hash string to the prefix
+	metricName := strings.Join([]string{prefix, hashString}, "_")
+
+	return metricName
 }
 
 // GenerateSignature generates a signature for a VectorSelector in a query.
@@ -264,7 +286,8 @@ func ProcessQuery(query string) {
 	// Generate signatures for each safe subtree and print them
 	for _, root := range visitor.SafeRoots {
 		sig := GenerateExprSignature(root)
-		fmt.Printf("Expr: %v, Signature: %s\n", root, sig)
+		hashedMetricName := GenerateHashedMetricName(sig, "recording_rule")
+		fmt.Printf("Expr: %v\nSignature: %s\nHashedMetricName: %s\n", root, sig, hashedMetricName)
 	}
 }
 
