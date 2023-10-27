@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -75,16 +77,12 @@ func diffSelectors(v1, v2 *QueryVisitor) []*SelectorWithPath {
 // GenerateSignature generates a signature for a VectorSelector in a query.
 func GenerateSignature(sel *parser.VectorSelector) string {
 	var sb strings.Builder
-	sb.WriteString(sel.Name) // assuming metric name will be part of signature
+	sb.WriteString(sel.Name) // metric name
 	sb.WriteString("{")
 	for i, matcher := range sel.LabelMatchers {
 		sb.WriteString(matcher.Name)
 		sb.WriteString("=")
-		if matcher.Type == labels.MatchEqual {
-			sb.WriteString("<val>")
-		} else {
-			sb.WriteString("<complex_val>")
-		}
+		sb.WriteString(matcher.Value) // include actual value
 		if i < len(sel.LabelMatchers)-1 {
 			sb.WriteString(",")
 		}
@@ -100,6 +98,16 @@ func GenerateExprSignature(node parser.Node) string {
 		switch expr := n.(type) {
 		case *parser.AggregateExpr:
 			sb.WriteString(expr.Op.String())
+			if expr.Grouping != nil { // include dimensions in 'by' clause
+				sb.WriteString("_by(")
+				for i, dim := range expr.Grouping {
+					sb.WriteString(dim)
+					if i < len(expr.Grouping)-1 {
+						sb.WriteString(",")
+					}
+				}
+				sb.WriteString(")_")
+			}
 			sb.WriteString("_")
 		case *parser.VectorSelector:
 			sb.WriteString(GenerateSignature(expr))
@@ -107,11 +115,8 @@ func GenerateExprSignature(node parser.Node) string {
 		case *parser.NumberLiteral:
 			sb.WriteString(fmt.Sprintf("NUM_%f_", expr.Val))
 		default:
-			// Catch-all for other types of nodes
 			if expr != nil {
-				sb.WriteString(fmt.Sprintf("TYPE_%T_VAL_%v_", expr, expr))
-			} else {
-				sb.WriteString(fmt.Sprintf("TYPE_%T_", expr))
+				panic(fmt.Sprintf("Unexpected node type in safe subtree: %v", expr))
 			}
 		}
 		return nil
@@ -243,10 +248,7 @@ func isSafeAggregateExpr(expr *parser.AggregateExpr) bool {
 	}
 }
 
-func main() {
-	// Your query
-	query := `topk(5, sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (service, le))`
-
+func ProcessQuery(query string) {
 	// Parse the query
 	expr, err := parser.ParseExpr(query)
 	if err != nil {
@@ -256,46 +258,29 @@ func main() {
 	// Initialize the SafeSubtreeFinder
 	visitor := &SafeSubtreeFinder{}
 
-	// Walk the AST
+	// Walk the AST to find safe subtrees
 	parser.Walk(visitor, expr, nil)
 
-	// Now, visitor.SafeRoots should contain the root nodes of safe subtrees
-	// You can use these for constructing your recording rules.
-
-	// Print all the safe roots found
+	// Generate signatures for each safe subtree and print them
 	for _, root := range visitor.SafeRoots {
-		fmt.Printf("Safe root: %v\n", root)
+		sig := GenerateExprSignature(root)
+		fmt.Printf("Expr: %v, Signature: %s\n", root, sig)
 	}
 }
 
-// func main() {
-// 	queries := []string{
-// 		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (service, le)`,
-// 		`sum(http_request_duration_seconds_bucket{service="service-b",le="+Inf"}) by (service, le)`,
-// 		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (le)`,
-// 		`sum(http_request_duration_seconds_bucket{service="service-a",le="+Inf"}) by (le)`,
-// 		`sum(http_request_duration_seconds_bucket{service="service-b"}) by (le)`,
-// 		`topk(5, sum(http_request_duration_seconds_bucket{service="service-b"}) by (le))`,
-// 		`topk(5, sum(http_request_duration_seconds_bucket{service="service-a"}) by (service, le))`,
-// 	}
+func main() {
+	// Create a scanner to read from stdin
+	scanner := bufio.NewScanner(os.Stdin)
 
-// 	signatureMap := make(map[string][]parser.Expr)
+	fmt.Println("Enter queries, one per line (Ctrl-D to terminate):")
 
-// 	for _, query := range queries {
-// 		expr, err := parser.ParseExpr(query)
-// 		if err != nil {
-// 			log.Fatalf("Error while parsing the query: %v", err)
-// 		}
-// 		sig := GenerateExprSignature(expr)
-// 		signatureMap[sig] = append(signatureMap[sig], expr)
-// 	}
+	// Read queries from stdin
+	for scanner.Scan() {
+		query := scanner.Text()
+		ProcessQuery(query)
+	}
 
-// 	// Now, signatureMap contains all the selectors grouped by their signatures.
-// 	// You can now proceed with additional checks or optimizations on each group.
-// 	for signature, selectors := range signatureMap {
-// 		fmt.Printf("Signature: %s\n", signature)
-// 		for _, sel := range selectors {
-// 			fmt.Printf("  - %s\n", sel)
-// 		}
-// 	}
-// }
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, "Reading standard input:", err)
+	}
+}
