@@ -1,8 +1,14 @@
-# Prom-Auto-Record
+# Automatic Prometheus Recording rules
 
 ## Overview
 
-`prom-auto-record` is an automation tool for generating Prometheus recording rules from a set of existing Prometheus queries. This project aims to offload some of the query processing overhead to recording rules, thereby optimizing Grafana dashboards or similar systems that rely on Prometheus for metrics. 
+`prom-auto-record` is an automation tool for generating Prometheus recording rules from a set of existing Prometheus queries.
+Manual creation of recording rules for Grafana dashboards can be tedious and laborous.
+This project sets out to solve that.
+
+The idea would be to add an HTTP server to this program that would act as a proxy between grafana and prometheus.
+After assembling information on the queries it would then write recording rules to a configmap which would in turn be read by prometheus itself.
+At query-time this proxy would then analyze queries and replace them with recordings. If a recording rule was recently added and not enough data has been recorded, the query would get passed through to upstream.
 
 **This project never left the POC stage**
 
@@ -37,6 +43,10 @@ Currently, `VectorSelector`, `sum`, `count` and `avg` are considered safe operat
 3. **Advanced Aggregate Functions**: Support for more advanced aggregate functions and query features is not yet implemented.
 
 4. **Subtree Reusability**: Currently, the largest "safe" subtree is used for generating a recording rule. The ability to reuse smaller subtrees in multiple recording rules is not yet available.
+
+5. **HTTP Proxy server**
+
+6. **Writing to configmap**
 
 ## Usage
 

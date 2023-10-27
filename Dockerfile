@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o prom-auto-record ./cmd/prom-auto-record
+RUN CGO_ENABLED=0 GOOS=linux go build -o prom-auto-record .
 
 # Stage 2: Create a minimal runtime image
 FROM alpine:3.18
