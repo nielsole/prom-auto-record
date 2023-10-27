@@ -52,9 +52,18 @@ Currently, `VectorSelector`, `sum`, `count` and `avg` are considered safe operat
 
 Run the program and input your Prometheus queries line-by-line to the standard input. The program will output identified safe subtrees and their corresponding recording rule signatures.
 
-## Development
+```sh
+echo 'topk(5, sum(http_request_duration_seconds_bucket{service="service-b"}) by (le))' | go run .
+```
 
-This project is written in Go, and it relies on the Prometheus Go client library for parsing queries and generating ASTs.
+You'll receive an output like this:
+
+```
+Enter queries, one per line (Ctrl-D to terminate):
+Expr: sum by (le) (http_request_duration_seconds_bucket{service="service-b"})
+Signature: sum_by(le)__http_request_duration_seconds_bucket{service=service-b,__name__=http_request_duration_seconds_bucket}_
+HashedMetricName: recording_rule_3d52752d9da0
+```
 
 ## Contributing
 
